@@ -1,4 +1,4 @@
-//Package policy provides RBAC policy enforcement similar to the OpenStack oslo.policy library.
+// Package policy provides RBAC policy enforcement similar to the OpenStack oslo.policy library.
 package policy
 
 import "fmt"
@@ -10,16 +10,16 @@ import "fmt"
 
 type rule func(c Context) bool
 
-//Check is the interface for checks
+// Check is the interface for checks
 type Check func(c Context, key, match string) bool
 
-//Enforcer is responsible for loading and enforcing rules.
+// Enforcer is responsible for loading and enforcing rules.
 type Enforcer struct {
 	rules  map[string]rule
 	checks map[string]Check
 }
 
-//Enforce checks authorization of a rule for the given Context
+// Enforce checks authorization of a rule for the given Context
 func (p *Enforcer) Enforce(rule string, c Context) bool {
 	c.rules = &p.rules
 	c.checks = p.checks
@@ -27,15 +27,15 @@ func (p *Enforcer) Enforce(rule string, c Context) bool {
 	return ok && r(c)
 }
 
-//AddCheck registers a custom check for the given name.
-//A custom check can by used by specifing the name as the left side of the check.
-//E.g. mycheck:valueformycheck
+// AddCheck registers a custom check for the given name.
+// A custom check can by used by specifing the name as the left side of the check.
+// E.g. mycheck:valueformycheck
 func (p *Enforcer) AddCheck(name string, c Check) {
 	p.checks[name] = c
 }
 
-//NewEnforcer parses the provided rule set and returns a policy enforcer
-//By default the Enforcer registers the following checks
+// NewEnforcer parses the provided rule set and returns a policy enforcer
+// By default the Enforcer registers the following checks
 // "rule": RuleCheck
 // "role": RoleCheck
 // "http": HttpCheck
@@ -60,7 +60,7 @@ func NewEnforcer(rules map[string]string) (*Enforcer, error) {
 	return &p, nil
 }
 
-//Context encapsulates the external data required for enforcing a rules. Populating a Context object is left to the application using the policy engine.
+// Context encapsulates the external data required for enforcing a rules. Populating a Context object is left to the application using the policy engine.
 type Context struct {
 	//Authentication context information from the keystone token, e.g. user_id, user_domain_id...
 	Auth map[string]string
@@ -78,7 +78,7 @@ type Context struct {
 	checks map[string]Check
 }
 
-//RuleCheck provides the standard rule:... check
+// RuleCheck provides the standard rule:... check
 func RuleCheck(c Context, key, match string) bool {
 	rule, ok := (*c.rules)[match]
 	if !ok {
@@ -87,7 +87,7 @@ func RuleCheck(c Context, key, match string) bool {
 	return rule(c)
 }
 
-//RoleCheck provides the standard role:... check.
+// RoleCheck provides the standard role:... check.
 func RoleCheck(c Context, key, match string) bool {
 	for _, r := range c.Roles {
 		if r == match {
@@ -97,14 +97,14 @@ func RoleCheck(c Context, key, match string) bool {
 	return false
 }
 
-//HTTPCheck implements the http:... check
+// HTTPCheck implements the http:... check
 func HTTPCheck(c Context, key, match string) bool {
 	return false // not implemented yet
 }
 
-//DefaultCheck is used whenever there is no specific check registered for the left hand side.
-//It simply tries to match the right side if the check to the authentication credential given by
-//the left side. E.g. user_id:%(target.user_id)
+// DefaultCheck is used whenever there is no specific check registered for the left hand side.
+// It simply tries to match the right side if the check to the authentication credential given by
+// the left side. E.g. user_id:%(target.user_id)
 func DefaultCheck(c Context, key, match string) bool {
 	cred, ok := c.Auth[key]
 	if !ok {

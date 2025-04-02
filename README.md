@@ -38,28 +38,24 @@ go get github.com/mehmettopcu/goslo.policy.server
 mkdir -p policies
 ```
 
-2. Add policy files for each service (e.g., `policies/nova-policy.yaml`):
+2. Add policy files for each service (e.g., `policy-rules/nova.yaml`):
 
 ```yaml
-rules:
-  compute:start_instance:
-    description: "Only admin users can start instances"
-    roles: ["admin"]
-  
-  compute:delete_instance:
-    description: "Admin and project owner can delete instances"
-    roles: ["admin"]
-    allow_project_owner: true
-
-  compute:resize_instance:
-    description: "Only users with member or admin role can resize an instance"
-    roles: ["admin", "member"]
+"context_is_admin": "role:admin"
+"admin_or_owner": "is_admin:True or project_id:%(project_id)s"
+"admin_api": "is_admin:True"
+"project_member_api": "role:member and project_id:%(project_id)s"
+"project_reader_api": "role:reader and project_id:%(project_id)s"
+"project_member_or_admin": "rule:project_member_api or rule:context_is_admin"
+"project_reader_or_admin": "rule:project_reader_api or rule:context_is_admin"
+"os_compute_api:os-admin-actions:reset_state": "rule:context_is_admin"
+"os_compute_api:os-admin-actions:inject_network_info": "rule:context_is_admin"
 ```
 
 3. Start the policy server:
 
 ```bash
-go run main.go -policy-dir policies -addr :8080
+go run main.go -policy-dir policy-rules -addr :8082
 ```
 
 The server will start and listen for policy enforcement requests. It supports graceful shutdown through SIGINT and SIGTERM signals.
@@ -67,7 +63,7 @@ The server will start and listen for policy enforcement requests. It supports gr
 4. Make policy enforcement requests:
 
 ```bash
-curl -X POST http://localhost:8080/enforce \
+curl -X POST http://localhost:8082/enforce \
   -H "Content-Type: application/json" \
   -d '{
     "service": "nova",
@@ -101,8 +97,8 @@ Enforces a policy rule for a given service and action.
 ```json
 {
   "service": "string",  // Service name (e.g., "nova")
-  "action": "string",   // Action to enforce (e.g., "compute:start_instance")
-  "token": {           // Token information
+  "rule": "string",   // Action to enforce (e.g., "compute:start_instance")
+  "credentials": {           // Token information
     "user": {
       "id": "string",
       "name": "string",
@@ -114,7 +110,7 @@ Enforces a policy rule for a given service and action.
       "name": "string"
     }
   },
-  "request": {         // Request-specific information
+  "target": {         // Request-specific information
     "project_id": "string"
   }
 }
@@ -131,17 +127,11 @@ Enforces a policy rule for a given service and action.
 
 ## Policy File Format
 
-Each service should have its own YAML policy file in the policy directory. The file should be named `{service}-policy.yaml`.
+Each service should have its own YAML policy file in the policy directory. The file should be named `{service}.yaml`.
 
 ### Policy Rule Format
 
-```yaml
-rules:
-  action_name:
-    description: "Human-readable description"
-    roles: ["role1", "role2"]  # Required roles
-    allow_project_owner: true   # Optional: allow project owner
-```
+https://docs.openstack.org/oslo.policy/latest/admin/policy-yaml-file.html
 
 ## License
 
