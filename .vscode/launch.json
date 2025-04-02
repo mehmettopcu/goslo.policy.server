@@ -1,0 +1,32 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch Server",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/main.go",
+        },
+        {
+            "name": "Test Policy Reload",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}/server",
+            "args": [
+                "-test.run",
+                "TestPolicyReload"
+            ],
+            "showLog": true
+        },
+        {
+            "name": "Test All",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": "${workspaceFolder}/server",
+            "showLog": true
+        }
+    ]
+} 

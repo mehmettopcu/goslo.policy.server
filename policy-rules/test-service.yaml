@@ -1,0 +1,6 @@
+"admin_required": "role:admin or is_admin:1"
+"owner": "user_id:%(user_id)s"
+"user": "user_id:%(target.user.id)s"
+"test:read": "rule:user or rule:owner"
+"test:write": "rule:admin_required"
+"test:delete": "rule:user"

@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  policy-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["-addr", ":8082","-policy-dir", "/etc/policy-rules", "-log-dir", "/var/log/policy-server"]
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./policy-rules:/etc/policy-rules
+      - ./logs:/var/log/policy-server
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - policy-network
+
+networks:
+  policy-network:
+    driver: bridge 
