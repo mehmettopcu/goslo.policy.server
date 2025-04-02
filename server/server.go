@@ -242,7 +242,9 @@ func (pm *PolicyManager) StartServerWithContext(ctx context.Context, addr string
 	mux.HandleFunc("/enforce", pm.HandleEnforce)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			pm.logger.Error("failed to write health response", "error", err)
+		}
 	})
 
 	srv := &http.Server{
@@ -278,20 +280,26 @@ func (pm *PolicyManager) HandleEnforce(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(EnforceResponse{
+		if err := json.NewEncoder(w).Encode(EnforceResponse{
 			Allowed: false,
 			Error:   "Method not allowed",
-		})
+		}); err != nil {
+			pm.logger.Error("failed to encode response", "error", err)
+			return
+		}
 		return
 	}
 
 	var req EnforceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(EnforceResponse{
+		if err := json.NewEncoder(w).Encode(EnforceResponse{
 			Allowed: false,
 			Error:   "Invalid request body",
-		})
+		}); err != nil {
+			pm.logger.Error("failed to encode response", "error", err)
+			return
+		}
 		return
 	}
 
@@ -299,10 +307,13 @@ func (pm *PolicyManager) HandleEnforce(w http.ResponseWriter, r *http.Request) {
 	enforcer, exists := pm.GetPolicy(req.Service)
 	if !exists {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(EnforceResponse{
+		if err := json.NewEncoder(w).Encode(EnforceResponse{
 			Allowed: false,
 			Error:   fmt.Sprintf("Service %s not found", req.Service),
-		})
+		}); err != nil {
+			pm.logger.Error("failed to encode response", "error", err)
+			return
+		}
 		return
 	}
 
@@ -380,9 +391,12 @@ func (pm *PolicyManager) HandleEnforce(w http.ResponseWriter, r *http.Request) {
 	)
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(EnforceResponse{
+	if err := json.NewEncoder(w).Encode(EnforceResponse{
 		Allowed: allowed,
-	})
+	}); err != nil {
+		pm.logger.Error("failed to encode response", "error", err)
+		return
+	}
 }
 
 // Request represents the request context
