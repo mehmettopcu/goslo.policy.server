@@ -13,6 +13,9 @@ jobs:
         go-version: [1.23.x, 1.24.x]
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      GOPATH: ${{ github.workspace }}/go
+      GOBIN: ${{ github.workspace }}/go/bin
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
@@ -20,6 +23,10 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
+    - name: Update PATH
+      run: echo "${{ github.workspace }}/go/bin" >> $GITHUB_PATH
+    - name: Install goyacc
+      run: go install golang.org/x/tools/cmd/goyacc@latest
     - name: Test
       run: make test
     - name: golangci-lint
