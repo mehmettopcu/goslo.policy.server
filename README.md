@@ -2,6 +2,8 @@
 
 # OpenStack Oslo Policy Server
 
+> **⚠️ Development Status**: This project is currently under active development. The API and features are subject to change. Please use with caution in production environments.
+
 This project implements a centralized policy server for OpenStack Oslo policy rules. It provides a REST API for policy enforcement and supports dynamic policy updates through YAML configuration files.
 
 > **Note**: This project is built on top of [goslo.policy](https://github.com/databus23/goslo.policy), a Go implementation of OpenStack's oslo.policy library.
