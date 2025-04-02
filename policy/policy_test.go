@@ -3,6 +3,7 @@ package policy
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -68,7 +69,7 @@ func TestRules(t *testing.T) {
 func TestPolicy(t *testing.T) {
 	var keystonePolicy map[string]string
 
-	file, err := os.Open("testdata/keystone.v3cloudsample.json")
+	file, err := os.Open(filepath.Join("..", "testdata", "keystone.v3cloudsample.json"))
 	if err != nil {
 		t.Fatal("Failed to open policy file: ", err)
 	}

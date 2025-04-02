@@ -1,7 +1,7 @@
 .PHONY: test
-test: parser.go
-	go test -v .
+test: policy/parser.go
+	go test -v ./policy
 
-parser.go: parser.y
-	goyacc -v "" -o parser.go parser.y
+policy/parser.go: policy/parser.y
+	goyacc -v "" -o policy/parser.go policy/parser.y
 
