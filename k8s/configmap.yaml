@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: policy-config
+  namespace: openstack
+  labels:
+    app: policy-server
+data:
+  nova.yaml: |
+    "context_is_admin": "role:admin"
+    "admin_or_owner": "is_admin:True or project_id:%(project_id)s"
+    "admin_api": "is_admin:True"
+    "project_member_api": "role:member and project_id:%(project_id)s"
+    "project_reader_api": "role:reader and project_id:%(project_id)s"
+    "project_member_or_admin": "rule:project_member_api or rule:context_is_admin"
+    "project_reader_or_admin": "rule:project_reader_api or rule:context_is_admin"
+    "os_compute_api:os-admin-actions:reset_state": "rule:context_is_admin"
+    "os_compute_api:os-admin-actions:inject_network_info": "rule:context_is_admin" 
