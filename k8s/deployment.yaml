@@ -20,7 +20,7 @@ spec:
         image: ghcr.io/mehmettopcu/goslo.policy.server:main
         imagePullPolicy: Always
         command: ["/usr/local/bin/policy-server"]
-        args: ["-policy-dir", "/policy-rules", "-addr", ":8082", "-log-dir", "/var/log/policy-server"]
+        args: ["-policy-dir", "/policy-files", "-addr", ":8082", "-log-dir", "/var/log/policy-server", "-watch-config", "true"]
         ports:
         - containerPort: 8082
           name: http
@@ -33,7 +33,8 @@ spec:
             memory: "256Mi"
         volumeMounts:
         - name: policy-config
-          mountPath: /policy-rules
+          mountPath: /policy-files/nova.yaml
+          subPath: nova.yaml
         - name: logs
           mountPath: /var/log/policy-server
         livenessProbe:

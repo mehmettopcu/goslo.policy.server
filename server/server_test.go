@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/mehmettopcu/goslo.policy.server/log"
 )
 
 func setupTestPolicyDir(t interface{}) (string, func()) {
@@ -68,7 +70,7 @@ func TestNewPolicyServer(t *testing.T) {
 	var ps *PolicyManager
 	go func() {
 		var err error
-		ps, err = NewPolicyManager(tmpDir, "logs")
+		ps, err = NewPolicyManager(tmpDir, log.GetLogger(), false)
 		if err != nil {
 			t.Errorf("Failed to create policy server: %v", err)
 			done <- false
@@ -99,7 +101,7 @@ func TestHandleEnforce(t *testing.T) {
 	tmpDir, cleanup := setupTestPolicyDir(t)
 	defer cleanup()
 
-	ps, err := NewPolicyManager(tmpDir, "logs")
+	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), false)
 	if err != nil {
 		t.Fatalf("Failed to create policy server: %v", err)
 	}
@@ -260,7 +262,7 @@ func TestPolicyReload(t *testing.T) {
 	tmpDir, cleanup := setupTestPolicyDir(t)
 	defer cleanup()
 
-	ps, err := NewPolicyManager(tmpDir, "logs")
+	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), true)
 	if err != nil {
 		t.Fatalf("Failed to create policy server: %v", err)
 	}
@@ -324,12 +326,6 @@ func TestPolicyReload(t *testing.T) {
 	}
 	t.Log("Updated policy file written")
 
-	// Force policy reload
-	if err := ps.loadAllPolicies(); err != nil {
-		t.Fatalf("Failed to reload policies: %v", err)
-	}
-	t.Log("Policies reloaded")
-
 	// Wait for reload to complete
 	time.Sleep(1000 * time.Millisecond)
 
@@ -363,7 +359,7 @@ func TestInvalidRequests(t *testing.T) {
 	tmpDir, cleanup := setupTestPolicyDir(t)
 	defer cleanup()
 
-	ps, err := NewPolicyManager(tmpDir, "logs")
+	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), false)
 	if err != nil {
 		t.Fatalf("Failed to create policy server: %v", err)
 	}
@@ -440,7 +436,7 @@ func BenchmarkHandleEnforce(b *testing.B) {
 	tmpDir, cleanup := setupTestPolicyDir(b)
 	defer cleanup()
 
-	ps, err := NewPolicyManager(tmpDir, "logs")
+	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), false)
 	if err != nil {
 		b.Fatalf("Failed to create policy server: %v", err)
 	}
@@ -479,7 +475,7 @@ func BenchmarkPolicyReload(b *testing.B) {
 	tmpDir, cleanup := setupTestPolicyDir(b)
 	defer cleanup()
 
-	ps, err := NewPolicyManager(tmpDir, "logs")
+	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), false)
 	if err != nil {
 		b.Fatalf("Failed to create policy server: %v", err)
 	}
@@ -503,7 +499,7 @@ func BenchmarkPolicyReload(b *testing.B) {
 		}
 
 		// Force policy reload
-		if err := ps.loadAllPolicies(); err != nil {
+		if err := ps.loadAllPolicies(false); err != nil {
 			b.Fatalf("Failed to reload policies: %v", err)
 		}
 
@@ -518,7 +514,7 @@ func BenchmarkPolicyReload(b *testing.B) {
 		}
 
 		// Force policy reload
-		if err := ps.loadAllPolicies(); err != nil {
+		if err := ps.loadAllPolicies(false); err != nil {
 			b.Fatalf("Failed to reload policies: %v", err)
 		}
 	}
@@ -528,7 +524,7 @@ func BenchmarkConcurrentEnforce(b *testing.B) {
 	tmpDir, cleanup := setupTestPolicyDir(b)
 	defer cleanup()
 
-	ps, err := NewPolicyManager(tmpDir, "logs")
+	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), false)
 	if err != nil {
 		b.Fatalf("Failed to create policy server: %v", err)
 	}

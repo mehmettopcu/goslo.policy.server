@@ -3,50 +3,87 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/mehmettopcu/goslo.policy.server/log"
 	"github.com/mehmettopcu/goslo.policy.server/server"
 )
 
+const (
+	// Default values
+	defaultPolicyDir = "policy-files"
+	defaultLogDir    = "audit-logs"
+	defaultAddr      = ":8082"
+
+	// Timeouts
+	shutdownTimeout = 5 * time.Second
+)
+
 func main() {
-	policyDir := flag.String("policy-dir", "policy-rules", "Directory containing policy YAML files")
-	logDir := flag.String("log-dir", "logs", "Directory containing policy YAML files")
-	addr := flag.String("addr", ":8082", "Server address to listen on")
+	// Parse command line flags
+	policyDir := flag.String("policy-dir", defaultPolicyDir, "Directory containing policy files")
+	logDir := flag.String("log-dir", defaultLogDir, "Directory for log files")
+	addr := flag.String("addr", defaultAddr, "Server address")
+	logToStdout := flag.Bool("log-stdout", false, "Log to stdout instead of file")
+	watchFiles := flag.Bool("watch-files", true, "Enable/disable configuration file watching")
+	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
-	// Create policy directory if it doesn't exist
-	if err := os.MkdirAll(*policyDir, 0755); err != nil {
-		log.Fatalf("Failed to create policy directory: %v", err)
-	}
+	// Initialize logger
+	log.InitLogger(*logToStdout, *debug, *logDir)
+	logger := log.GetLogger()
 
-	// Create and start policy manager
-	pm, err := server.NewPolicyManager(*policyDir, *logDir)
+	// Create policy manager
+	pm, err := server.NewPolicyManager(*policyDir, logger, *watchFiles)
 	if err != nil {
-		log.Fatalf("Failed to create policy manager: %v", err)
+		logger.Fatal("failed to create policy manager", "error", err)
+	}
+	defer pm.Shutdown()
+
+	// Create HTTP server with timeouts
+	mux := http.NewServeMux()
+	mux.HandleFunc("/enforce", pm.HandleEnforce)
+	mux.HandleFunc("/health", pm.HandleHealth)
+
+	srv := &http.Server{
+		Addr:         *addr,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
-	// Create context that can be cancelled
+	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
+	// Start server in a goroutine
 	go func() {
-		sig := <-sigChan
-		log.Printf("Received signal: %v", sig)
-		cancel()
+		logger.Info("starting server", "addr", *addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("failed to start server", "error", err)
+		}
 	}()
 
-	log.Printf("Starting policy server on %s", *addr)
-	if err := pm.StartServerWithContext(ctx, *addr); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	// Wait for interrupt signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	<-sigChan
+
+	// Shutdown server
+	logger.Info("shutting down server")
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, shutdownTimeout)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("server shutdown error", "error", err)
 	}
 
-	// Shutdown manager
+	// Shutdown policy manager
 	pm.Shutdown()
+	logger.Info("server stopped")
 }

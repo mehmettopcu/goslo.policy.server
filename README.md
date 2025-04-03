@@ -1,6 +1,6 @@
-[![Build Status](https://github.com/mehmettopcu/goslo.policy.server/actions/workflows/go.yml/badge.svg?branch=master)](https://github.com/mehmettopcu/goslo.policy.server/actions/)
-
 # OpenStack Oslo Policy Server
+
+[![Build Status](https://github.com/mehmettopcu/goslo.policy.server/actions/workflows/go.yml/badge.svg?branch=master)](https://github.com/mehmettopcu/goslo.policy.server/actions/)
 
 > **⚠️ Development Status**: This project is currently under active development. The API and features are subject to change. Please use with caution in production environments.
 
@@ -32,35 +32,35 @@ go get github.com/mehmettopcu/goslo.policy.server
 
 ## Usage
 
-1. Create a policy directory and add your policy files:
+1.Create a policy directory and add your policy files:
 
 ```bash
-mkdir -p policies
+  mkdir -p policies
 ```
 
-2. Add policy files for each service (e.g., `policy-rules/nova.yaml`):
+2.Add policy files for each service (e.g., `policy-files/nova.yaml`):
 
-```yaml
-"context_is_admin": "role:admin"
-"admin_or_owner": "is_admin:True or project_id:%(project_id)s"
-"admin_api": "is_admin:True"
-"project_member_api": "role:member and project_id:%(project_id)s"
-"project_reader_api": "role:reader and project_id:%(project_id)s"
-"project_member_or_admin": "rule:project_member_api or rule:context_is_admin"
-"project_reader_or_admin": "rule:project_reader_api or rule:context_is_admin"
-"os_compute_api:os-admin-actions:reset_state": "rule:context_is_admin"
-"os_compute_api:os-admin-actions:inject_network_info": "rule:context_is_admin"
-```
+  ```yaml
+  "context_is_admin": "role:admin"
+  "admin_or_owner": "is_admin:True or project_id:%(project_id)s"
+  "admin_api": "is_admin:True"
+  "project_member_api": "role:member and project_id:%(project_id)s"
+  "project_reader_api": "role:reader and project_id:%(project_id)s"
+  "project_member_or_admin": "rule:project_member_api or rule:context_is_admin"
+  "project_reader_or_admin": "rule:project_reader_api or rule:context_is_admin"
+  "os_compute_api:os-admin-actions:reset_state": "rule:context_is_admin"
+  "os_compute_api:os-admin-actions:inject_network_info": "rule:context_is_admin"
+  ```
 
-3. Start the policy server:
+3.Start the policy server:
 
 ```bash
-go run main.go -policy-dir policy-rules -addr :8082
+go run main.go -policy-dir policy-files -addr :8082
 ```
 
 The server will start and listen for policy enforcement requests. It supports graceful shutdown through SIGINT and SIGTERM signals.
 
-4. Make policy enforcement requests:
+4.Make policy enforcement requests:
 
 ```bash
 curl -X POST http://localhost:8082/enforce \
@@ -131,8 +131,20 @@ Each service should have its own YAML policy file in the policy directory. The f
 
 ### Policy Rule Format
 
-https://docs.openstack.org/oslo.policy/latest/admin/policy-yaml-file.html
+<https://docs.openstack.org/oslo.policy/latest/admin/policy-yaml-file.html>
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache License, Version 2.0 - see the [LICENSE](LICENSE) file for details.
+
+The Apache License 2.0 is a permissive free software license written by the Apache Software Foundation (ASF). It allows users to:
+
+- Use the software for any purpose
+- Distribute the software
+- Modify the software
+- Distribute modified versions of the software
+
+For more information about the Apache License 2.0, please visit:
+
+- [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+- [Apache License FAQ](https://www.apache.org/foundation/license-faq.html)

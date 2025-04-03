@@ -96,7 +96,7 @@
 "os_compute_api:os-quota-class-sets:show": "rule:context_is_admin"
 "os_compute_api:os-quota-class-sets:update": "rule:context_is_admin"
 "os_compute_api:os-quota-sets:update": "rule:context_is_admin"
-"os_compute_api:os-quota-sets:defaults": "@"
+"os_compute_api:os-quota-sets:defaults": "role:admin"
 "os_compute_api:os-quota-sets:show": "rule:project_reader_or_admin"
 "os_compute_api:os-quota-sets:delete": "rule:context_is_admin"
 "os_compute_api:os-quota-sets:detail": "rule:project_reader_or_admin"

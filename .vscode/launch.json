@@ -7,6 +7,10 @@
             "request": "launch",
             "mode": "debug",
             "program": "${workspaceFolder}/main.go",
+            "args": [
+                "-log-stdout",
+                "true"
+            ],
         },
         {
             "name": "Test Policy Reload",

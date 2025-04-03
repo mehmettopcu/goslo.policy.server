@@ -1,10 +1,8 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,391 +10,32 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/file"
+	"github.com/knadh/koanf/v2"
+	"github.com/mehmettopcu/goslo.policy.server/log"
 	"github.com/mehmettopcu/goslo.policy.server/policy"
-	"gopkg.in/yaml.v3"
 )
 
-// PolicyConfig represents the policy configuration for a service
-type PolicyConfig struct {
-	Rules map[string]string `yaml:",inline"`
+// PolicyFile represents a single policy file configuration
+type PolicyFile struct {
+	Name        string
+	Path        string
+	LastUpdated time.Time
+	Enforcer    *policy.Enforcer
+	koanf       *koanf.Koanf
 }
 
-// PolicyManager handles policy file management and caching with minimal locking
+// PolicyManager handles policy file management and caching
 type PolicyManager struct {
 	policyDir  string
-	enforcers  map[string]*policy.Enforcer
-	mu         sync.RWMutex
-	fileCache  map[string]time.Time
-	logger     *slog.Logger
-	reloadChan chan struct{}
+	policies   map[string]*PolicyFile // Map for faster access
+	mu         sync.RWMutex           // Mutex for thread-safe access
+	watcher    *fsnotify.Watcher
+	logger     *log.CustomLogger
 	wg         sync.WaitGroup
-}
-
-// NewPolicyManager creates a new policy manager instance
-func NewPolicyManager(dir, logDir string) (*PolicyManager, error) {
-	// Create logs directory if it doesn't exist
-	if logDir == "" {
-		logDir = "logs"
-	}
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create log directory: %v", err)
-	}
-
-	// Create log file
-	logFile, err := os.OpenFile(filepath.Join(logDir, "policy.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open log file: %v", err)
-	}
-
-	// Create JSON logger
-	logger := slog.New(slog.NewJSONHandler(logFile, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-
-	pm := &PolicyManager{
-		policyDir:  dir,
-		enforcers:  make(map[string]*policy.Enforcer),
-		fileCache:  make(map[string]time.Time),
-		logger:     logger,
-		reloadChan: make(chan struct{}, 1),
-	}
-
-	// Load initial policies
-	if err := pm.loadAllPolicies(); err != nil {
-		return nil, err
-	}
-
-	// Start watching for policy changes
-	pm.wg.Add(1)
-	go pm.watchPolicyDir()
-
-	return pm, nil
-}
-
-// loadAllPolicies loads all policy files from the directory
-func (pm *PolicyManager) loadAllPolicies() error {
-	tmpEnforcers := make(map[string]*policy.Enforcer)
-	tmpFileCache := make(map[string]time.Time)
-
-	err := filepath.Walk(pm.policyDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-
-		ext := filepath.Ext(path)
-		if ext != ".yaml" && ext != ".yml" {
-			return nil
-		}
-
-		service := filepath.Base(path[:len(path)-len(ext)])
-		if err := pm.loadSinglePolicy(path, service, info.ModTime(), tmpEnforcers, tmpFileCache); err != nil {
-			pm.logger.Error("failed to load policy file",
-				"path", path,
-				"error", err,
-			)
-			return nil
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to walk policy directory: %v", err)
-	}
-
-	// Update cache atomically
-	pm.mu.Lock()
-	pm.enforcers = tmpEnforcers
-	pm.fileCache = tmpFileCache
-	pm.mu.Unlock()
-
-	return nil
-}
-
-// loadSinglePolicy loads a single policy file
-func (pm *PolicyManager) loadSinglePolicy(path, service string, modTime time.Time, tmpEnforcers map[string]*policy.Enforcer, tmpFileCache map[string]time.Time) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read file: %v", err)
-	}
-
-	var config PolicyConfig
-	if err := yaml.Unmarshal(content, &config); err != nil {
-		return fmt.Errorf("failed to parse YAML: %v", err)
-	}
-
-	enforcer, err := policy.NewEnforcer(config.Rules)
-	if err != nil {
-		return fmt.Errorf("failed to create enforcer: %v", err)
-	}
-
-	tmpEnforcers[service] = enforcer
-	tmpFileCache[path] = modTime
-
-	return nil
-}
-
-// watchPolicyDir monitors policy files for changes
-func (pm *PolicyManager) watchPolicyDir() {
-	defer pm.wg.Done()
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		pm.logger.Error("failed to create watcher", "error", err)
-		return
-	}
-	defer watcher.Close()
-
-	if err := watcher.Add(pm.policyDir); err != nil {
-		pm.logger.Error("failed to add policy directory to watcher", "error", err)
-		return
-	}
-
-	for {
-		select {
-		case <-pm.reloadChan:
-			return
-		case event := <-watcher.Events:
-			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove) != 0 {
-				pm.handleFileChange(event.Name)
-			}
-		case err := <-watcher.Errors:
-			pm.logger.Error("watcher error", "error", err)
-		}
-	}
-}
-
-// handleFileChange handles file change events
-func (pm *PolicyManager) handleFileChange(path string) {
-	ext := filepath.Ext(path)
-	if ext != ".yaml" && ext != ".yml" {
-		return
-	}
-
-	service := filepath.Base(path[:len(path)-len(ext)])
-
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		pm.removeFromCache(service, path)
-		return
-	}
-
-	if err != nil || info.IsDir() {
-		return
-	}
-
-	// Check file modification time
-	pm.mu.RLock()
-	lastMod, exists := pm.fileCache[path]
-	pm.mu.RUnlock()
-
-	if exists && info.ModTime().Equal(lastMod) {
-		return
-	}
-
-	// Load the updated policy
-	if err := pm.loadSinglePolicy(path, service, info.ModTime(), pm.enforcers, pm.fileCache); err != nil {
-		pm.logger.Error("failed to reload policy file",
-			"path", path,
-			"error", err,
-		)
-		return
-	}
-
-	pm.logger.Info("reloaded policy file", "path", path)
-}
-
-// removeFromCache removes a policy from the cache
-func (pm *PolicyManager) removeFromCache(service, path string) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
-	delete(pm.enforcers, service)
-	delete(pm.fileCache, path)
-
-	pm.logger.Info("removed policy from cache", "service", service)
-}
-
-// GetPolicy retrieves a policy enforcer for a service
-func (pm *PolicyManager) GetPolicy(service string) (*policy.Enforcer, bool) {
-	pm.mu.RLock()
-	defer pm.mu.RUnlock()
-	enforcer, ok := pm.enforcers[service]
-	return enforcer, ok
-}
-
-// Shutdown gracefully stops the policy manager
-func (pm *PolicyManager) Shutdown() {
-	select {
-	case <-pm.reloadChan:
-		// Channel already closed
-	default:
-		close(pm.reloadChan)
-	}
-	pm.wg.Wait()
-}
-
-// StartServerWithContext starts the policy server with context support for graceful shutdown
-func (pm *PolicyManager) StartServerWithContext(ctx context.Context, addr string) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/enforce", pm.HandleEnforce)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("OK")); err != nil {
-			pm.logger.Error("failed to write health response", "error", err)
-		}
-	})
-
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: mux,
-	}
-
-	// Start server in a goroutine
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			pm.logger.Error("server error", "error", err)
-		}
-	}()
-
-	// Wait for context cancellation
-	<-ctx.Done()
-
-	// Create shutdown context with timeout
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Attempt graceful shutdown
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server shutdown failed: %v", err)
-	}
-
-	return nil
-}
-
-// HandleEnforce handles policy enforcement requests with optimized locking
-func (pm *PolicyManager) HandleEnforce(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		if err := json.NewEncoder(w).Encode(EnforceResponse{
-			Allowed: false,
-			Error:   "Method not allowed",
-		}); err != nil {
-			pm.logger.Error("failed to encode response", "error", err)
-			return
-		}
-		return
-	}
-
-	var req EnforceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(EnforceResponse{
-			Allowed: false,
-			Error:   "Invalid request body",
-		}); err != nil {
-			pm.logger.Error("failed to encode response", "error", err)
-			return
-		}
-		return
-	}
-
-	// Get enforcer with minimal locking
-	enforcer, exists := pm.GetPolicy(req.Service)
-	if !exists {
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(EnforceResponse{
-			Allowed: false,
-			Error:   fmt.Sprintf("Service %s not found", req.Service),
-		}); err != nil {
-			pm.logger.Error("failed to encode response", "error", err)
-			return
-		}
-		return
-	}
-
-	// Create policy context with all available fields
-	ctx := policy.Context{
-		Auth: map[string]string{
-			"user_id":             req.Auth.UserID,
-			"domain_id":           req.Auth.DomainID,
-			"project_id":          req.Auth.ProjectID,
-			"user_domain_id":      req.Auth.UserDomainID,
-			"project_domain_id":   req.Auth.ProjectDomainID,
-			"username":            req.Auth.Username,
-			"project_name":        req.Auth.ProjectName,
-			"domain_name":         req.Auth.DomainName,
-			"user_domain_name":    req.Auth.UserDomainName,
-			"project_domain_name": req.Auth.ProjectDomainName,
-			"system_scope":        req.Auth.SystemScope,
-			"is_admin":            fmt.Sprintf("%v", req.Auth.IsAdmin),
-			"is_reader_admin":     fmt.Sprintf("%v", req.Auth.IsReaderAdmin),
-		},
-		Request: map[string]string{
-			// Target fields
-			"user_id":               req.Request.UserID,
-			"project_id":            req.Request.ProjectID,
-			"enforce_new_defaults":  req.Request.EnforceNewDefaults,
-			"tenant":                req.Request.Tenant,
-			"trust.trustor_user_id": req.Request.Trust.TrustorUserID,
-			"member_id":             req.Request.MemberID,
-			"owner":                 req.Request.Owner,
-			"domain_id":             req.Request.DomainID,
-
-			// Target fields
-			"target.user.id":                 req.Request.Target.User.ID,
-			"target.user.domain_id":          req.Request.Target.User.DomainID,
-			"target.project.id":              req.Request.Target.Project.ID,
-			"target.project.domain_id":       req.Request.Target.Project.DomainID,
-			"target.trust.trustor_user_id":   req.Request.Target.TargetTrust.TrustorUserID,
-			"target.trust.trustee_user_id":   req.Request.Target.TargetTrust.TrusteeUserID,
-			"target.token.user_id":           req.Request.Target.Token.UserID,
-			"target.domain.id":               req.Request.Target.Domain.ID,
-			"target.domain_id":               req.Request.Target.TargetDomainID,
-			"target.credential.user_id":      req.Request.Target.Credential.UserID,
-			"target.role.domain_id":          req.Request.Target.Role.DomainID,
-			"target.group.domain_id":         req.Request.Target.Group.DomainID,
-			"target.limit.domain.id":         req.Request.Target.Limit.Domain.ID,
-			"target.limit.project_id":        req.Request.Target.Limit.ProjectID,
-			"target.limit.project.domain_id": req.Request.Target.Limit.Project.DomainID,
-			"target.container.project_id":    req.Request.Target.Container.ProjectID,
-			"target.secret.project_id":       req.Request.Target.Secret.ProjectID,
-			"target.secret.creator_id":       req.Request.Target.Secret.CreatorID,
-			"target.order.project_id":        req.Request.Target.Order.ProjectID,
-
-			// Allocation fields
-			"allocation.owner": req.Request.Allocation.Owner,
-
-			// Node fields
-			"node.lessee": req.Request.Node.Lessee,
-			"node.owner":  req.Request.Node.Owner,
-		},
-		Roles: req.Auth.Roles,
-	}
-
-	// Enforce policy without any locking
-	allowed := enforcer.Enforce(req.Action, ctx)
-
-	// Log the policy decision with structured logging
-	pm.logger.Info("policy decision",
-		"action", req.Action,
-		"user_id", req.Auth.UserID,
-		"project_id", req.Auth.ProjectID,
-		"allowed", allowed,
-		"service", req.Service,
-		"is_admin", req.Auth.IsAdmin,
-		"roles", req.Auth.Roles,
-	)
-
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(EnforceResponse{
-		Allowed: allowed,
-	}); err != nil {
-		pm.logger.Error("failed to encode response", "error", err)
-		return
-	}
+	reloadChan chan string   // Channel for managing reloads
+	stopChan   chan struct{} // Channel for graceful shutdown
 }
 
 // Request represents the request context
@@ -507,4 +146,430 @@ type Auth struct {
 	IsAdmin           bool     `json:"is_admin"`
 	IsReaderAdmin     bool     `json:"is_reader_admin"`
 	Roles             []string `json:"roles"`
+}
+
+// NewPolicyManager creates a new policy manager instance
+func NewPolicyManager(dir string, logger *log.CustomLogger, watchFiles bool) (*PolicyManager, error) {
+	// Create watcher if file watching is enabled
+	var watcher *fsnotify.Watcher
+	var err error
+	if watchFiles {
+		watcher, err = fsnotify.NewWatcher()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create watcher: %v", err)
+		}
+	}
+
+	pm := &PolicyManager{
+		policyDir:  dir,
+		policies:   make(map[string]*PolicyFile),
+		watcher:    watcher,
+		logger:     logger,
+		reloadChan: make(chan string, 10), // Reduced buffer size
+		stopChan:   make(chan struct{}),
+	}
+
+	// Load initial policies
+	if err := pm.loadAllPolicies(watchFiles); err != nil {
+		return nil, err
+	}
+
+	// Start watching for policy changes if enabled
+	if watchFiles {
+		pm.wg.Add(1)
+		go pm.watchPolicyDir()
+		pm.wg.Add(1)
+		go pm.handleReloads()
+	}
+
+	return pm, nil
+}
+
+// loadAllPolicies loads all policy files from the directory
+func (pm *PolicyManager) loadAllPolicies(watchFiles bool) error {
+	// Add policy directory to watcher if enabled
+	if watchFiles && pm.watcher != nil {
+		if err := pm.watcher.Add(pm.policyDir); err != nil {
+			return fmt.Errorf("failed to add policy directory to watcher: %v", err)
+		}
+	}
+
+	// Walk through the policy directory
+	return filepath.Walk(pm.policyDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+
+		ext := filepath.Ext(path)
+		if ext != ".yaml" && ext != ".yml" {
+			return nil
+		}
+
+		pm.loadPolicyFile(path, watchFiles)
+		return nil
+	})
+}
+
+// loadPolicyFile loads a single policy file
+func (pm *PolicyManager) loadPolicyFile(path string, watchFiles bool) {
+	// Get service name from file path
+	serviceName := filepath.Base(path)
+	serviceName = serviceName[:len(serviceName)-len(filepath.Ext(serviceName))]
+
+	// Check if file is already loaded
+	pm.mu.RLock()
+	if _, exists := pm.policies[serviceName]; exists {
+		pm.mu.RUnlock()
+		pm.logger.Info("file already loaded", "service", serviceName, "path", path)
+		return
+	}
+	pm.mu.RUnlock()
+
+	// Create a new Koanf instance
+	k := koanf.New(".")
+
+	// Create file provider
+	f := file.Provider(path)
+
+	// Load YAML file
+	if err := k.Load(f, yaml.Parser()); err != nil {
+		pm.logger.Error("failed to load config file",
+			"service", serviceName,
+			"path", path,
+			"error", err,
+		)
+		return
+	}
+
+	// Unmarshal rules
+	var rules map[string]string
+	if err := k.Unmarshal("", &rules); err != nil {
+		pm.logger.Error("failed to unmarshal rules",
+			"service", serviceName,
+			"path", path,
+			"error", err,
+		)
+		return
+	}
+
+	// Create enforcer
+	enforcer, err := policy.NewEnforcer(rules)
+	if err != nil {
+		pm.logger.Error("failed to create enforcer",
+			"service", serviceName,
+			"path", path,
+			"error", err,
+		)
+		return
+	}
+
+	// Store policy file
+	pm.mu.Lock()
+	pm.policies[serviceName] = &PolicyFile{
+		Name:        serviceName,
+		Path:        path,
+		LastUpdated: time.Now(),
+		Enforcer:    enforcer,
+		koanf:       k,
+	}
+	pm.mu.Unlock()
+
+	// Start watching this file if enabled
+	if watchFiles && pm.watcher != nil {
+		pm.wg.Add(1)
+		go pm.watchFile(serviceName, k, f)
+	}
+
+	pm.logger.Info("loaded policy file", "service", serviceName, "path", path)
+}
+
+// watchFile monitors a single policy file for changes
+func (pm *PolicyManager) watchFile(serviceName string, _ *koanf.Koanf, f *file.File) {
+	defer pm.wg.Done()
+
+	if err := f.Watch(func(event interface{}, err error) {
+		if err != nil {
+			pm.logger.Error("watch error", "service", serviceName, "error", err)
+			return
+		}
+
+		select {
+		case <-pm.stopChan:
+			return
+		default:
+			// Send reload request to channel
+			select {
+			case pm.reloadChan <- serviceName:
+				pm.logger.Debug("reload request sent", "service", serviceName)
+			default:
+				pm.logger.Warn("reload channel full, skipping update", "service", serviceName)
+			}
+		}
+	}); err != nil {
+		pm.logger.Error("failed to start file watcher", "service", serviceName, "error", err)
+		return
+	}
+
+	// Wait for stop signal
+	<-pm.stopChan
+}
+
+// handleReloads processes reload requests
+func (pm *PolicyManager) handleReloads() {
+	defer pm.wg.Done()
+
+	for {
+		select {
+		case serviceName := <-pm.reloadChan:
+			// Get policy file
+			pm.mu.RLock()
+			policyFile, exists := pm.policies[serviceName]
+			pm.mu.RUnlock()
+
+			if !exists {
+				pm.logger.Error("policy file not found", "service", serviceName)
+				continue
+			}
+
+			// Reload policy
+			if err := pm.reloadPolicy(serviceName, policyFile.koanf, file.Provider(policyFile.Path)); err != nil {
+				pm.logger.Error("failed to reload policy",
+					"service", serviceName,
+					"error", err,
+				)
+			} else {
+				pm.logger.Info("policy reloaded successfully", "service", serviceName)
+			}
+
+		case <-pm.stopChan:
+			pm.logger.Debug("handleReloads received stop signal")
+			return
+		}
+	}
+}
+
+// reloadPolicy reloads a policy file
+func (pm *PolicyManager) reloadPolicy(serviceName string, k *koanf.Koanf, f *file.File) error {
+	// Load YAML file
+	if err := k.Load(f, yaml.Parser()); err != nil {
+		return fmt.Errorf("failed to reload config: %w", err)
+	}
+
+	// Unmarshal rules
+	var rules map[string]string
+	if err := k.Unmarshal("", &rules); err != nil {
+		return fmt.Errorf("failed to unmarshal rules: %w", err)
+	}
+
+	// Create enforcer
+	enforcer, err := policy.NewEnforcer(rules)
+	if err != nil {
+		return fmt.Errorf("failed to create enforcer: %w", err)
+	}
+
+	// Update policy file
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	if policyFile, exists := pm.policies[serviceName]; exists {
+		policyFile.Enforcer = enforcer
+		policyFile.LastUpdated = time.Now()
+		pm.logger.Info("reloaded policy file", "service", serviceName)
+	} else {
+		return fmt.Errorf("policy file not found: %s", serviceName)
+	}
+
+	return nil
+}
+
+// watchPolicyDir monitors the policy directory for new files
+func (pm *PolicyManager) watchPolicyDir() {
+	defer pm.wg.Done()
+
+	for {
+		select {
+		case event, ok := <-pm.watcher.Events:
+			if !ok {
+				return
+			}
+
+			if event.Op&fsnotify.Create == fsnotify.Create {
+				if filepath.Ext(event.Name) == ".yaml" || filepath.Ext(event.Name) == ".yml" {
+					pm.logger.Info("new policy file detected", "path", event.Name)
+					pm.loadPolicyFile(event.Name, true)
+				}
+			}
+		case err, ok := <-pm.watcher.Errors:
+			if !ok {
+				return
+			}
+			pm.logger.Error("watcher error", "error", err)
+		case <-pm.stopChan:
+			return
+		}
+	}
+}
+
+// GetPolicy retrieves a policy enforcer for a service
+func (pm *PolicyManager) GetPolicy(service string) (*policy.Enforcer, bool) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+
+	if policyFile, exists := pm.policies[service]; exists {
+		return policyFile.Enforcer, true
+	}
+	return nil, false
+}
+
+// Shutdown gracefully stops the policy manager
+func (pm *PolicyManager) Shutdown() {
+	pm.logger.Info("shutting down policy manager")
+
+	// Signal all goroutines to stop
+	close(pm.stopChan)
+	close(pm.reloadChan)
+
+	// Close watcher
+	if pm.watcher != nil {
+		if err := pm.watcher.Close(); err != nil {
+			pm.logger.Error("failed to close watcher", "error", err)
+		}
+	}
+
+	// Wait for all goroutines to finish
+	pm.wg.Wait()
+
+	pm.logger.Info("policy manager shutdown complete")
+}
+
+// HandleEnforce handles policy enforcement requests with optimized locking
+func (pm *PolicyManager) HandleEnforce(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		if err := json.NewEncoder(w).Encode(EnforceResponse{
+			Allowed: false,
+			Error:   "Method not allowed",
+		}); err != nil {
+			pm.logger.Error("failed to encode response", "error", err)
+			return
+		}
+		return
+	}
+
+	var req EnforceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		if err := json.NewEncoder(w).Encode(EnforceResponse{
+			Allowed: false,
+			Error:   "Invalid request body",
+		}); err != nil {
+			pm.logger.Error("failed to encode response", "error", err)
+			return
+		}
+		return
+	}
+
+	// Get enforcer with minimal locking
+	enforcer, exists := pm.GetPolicy(req.Service)
+	if !exists {
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(EnforceResponse{
+			Allowed: false,
+			Error:   fmt.Sprintf("Service %s not found", req.Service),
+		}); err != nil {
+			pm.logger.Error("failed to encode response", "error", err)
+			return
+		}
+		return
+	}
+
+	// Create policy context with all available fields
+	ctx := policy.Context{
+		Auth: map[string]string{
+			"user_id":             req.Auth.UserID,
+			"domain_id":           req.Auth.DomainID,
+			"project_id":          req.Auth.ProjectID,
+			"user_domain_id":      req.Auth.UserDomainID,
+			"project_domain_id":   req.Auth.ProjectDomainID,
+			"username":            req.Auth.Username,
+			"project_name":        req.Auth.ProjectName,
+			"domain_name":         req.Auth.DomainName,
+			"user_domain_name":    req.Auth.UserDomainName,
+			"project_domain_name": req.Auth.ProjectDomainName,
+			"system_scope":        req.Auth.SystemScope,
+			"is_admin":            fmt.Sprintf("%v", req.Auth.IsAdmin),
+			"is_reader_admin":     fmt.Sprintf("%v", req.Auth.IsReaderAdmin),
+		},
+		Request: map[string]string{
+			// Target fields
+			"user_id":               req.Request.UserID,
+			"project_id":            req.Request.ProjectID,
+			"enforce_new_defaults":  req.Request.EnforceNewDefaults,
+			"tenant":                req.Request.Tenant,
+			"trust.trustor_user_id": req.Request.Trust.TrustorUserID,
+			"member_id":             req.Request.MemberID,
+			"owner":                 req.Request.Owner,
+			"domain_id":             req.Request.DomainID,
+
+			// Target fields
+			"target.user.id":                 req.Request.Target.User.ID,
+			"target.user.domain_id":          req.Request.Target.User.DomainID,
+			"target.project.id":              req.Request.Target.Project.ID,
+			"target.project.domain_id":       req.Request.Target.Project.DomainID,
+			"target.trust.trustor_user_id":   req.Request.Target.TargetTrust.TrustorUserID,
+			"target.trust.trustee_user_id":   req.Request.Target.TargetTrust.TrusteeUserID,
+			"target.token.user_id":           req.Request.Target.Token.UserID,
+			"target.domain.id":               req.Request.Target.Domain.ID,
+			"target.domain_id":               req.Request.Target.TargetDomainID,
+			"target.credential.user_id":      req.Request.Target.Credential.UserID,
+			"target.role.domain_id":          req.Request.Target.Role.DomainID,
+			"target.group.domain_id":         req.Request.Target.Group.DomainID,
+			"target.limit.domain.id":         req.Request.Target.Limit.Domain.ID,
+			"target.limit.project_id":        req.Request.Target.Limit.ProjectID,
+			"target.limit.project.domain_id": req.Request.Target.Limit.Project.DomainID,
+			"target.container.project_id":    req.Request.Target.Container.ProjectID,
+			"target.secret.project_id":       req.Request.Target.Secret.ProjectID,
+			"target.secret.creator_id":       req.Request.Target.Secret.CreatorID,
+			"target.order.project_id":        req.Request.Target.Order.ProjectID,
+
+			// Allocation fields
+			"allocation.owner": req.Request.Allocation.Owner,
+
+			// Node fields
+			"node.lessee": req.Request.Node.Lessee,
+			"node.owner":  req.Request.Node.Owner,
+		},
+		Roles: req.Auth.Roles,
+	}
+
+	// Enforce policy without any locking
+	allowed := enforcer.Enforce(req.Action, ctx)
+
+	// Log the policy decision with structured logging
+	pm.logger.Info("audit",
+		"service", req.Service,
+		"allowed", allowed,
+		"action", req.Action,
+		"user_id", req.Auth.UserID,
+		"project_id", req.Auth.ProjectID,
+		"is_admin", req.Auth.IsAdmin,
+		"roles", req.Auth.Roles,
+	)
+
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(EnforceResponse{
+		Allowed: allowed,
+	}); err != nil {
+		pm.logger.Error("failed to encode response", "error", err)
+		return
+	}
+}
+
+func (pm *PolicyManager) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte("OK")); err != nil {
+		pm.logger.Error("failed to write health response", "error", err)
+	}
 }
