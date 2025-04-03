@@ -1,6 +1,6 @@
 # OpenStack Oslo Policy Server
 
-[![Build Status](https://github.com/mehmettopcu/goslo.policy.server/actions/workflows/go.yml/badge.svg?branch=master)](https://github.com/mehmettopcu/goslo.policy.server/actions/)
+[![Build Status](https://github.com/mehmettopcu/goslo.policy.server/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/mehmettopcu/goslo.policy.server/actions/)
 
 > **⚠️ Development Status**: This project is currently under active development. The API and features are subject to change. Please use with caution in production environments.
 
