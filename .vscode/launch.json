@@ -11,6 +11,9 @@
                 "-log-stdout",
                 "true"
             ],
+            "env": {
+                "LOG_LEVEL": "4"
+            }
         },
         {
             "name": "Test Policy Reload",

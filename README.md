@@ -7,7 +7,6 @@
 This project implements a centralized policy server for OpenStack Oslo policy rules. It provides a REST API for policy enforcement and supports dynamic policy updates through YAML configuration files.
 
 > **Note**: This project is built on top of [goslo.policy](https://github.com/databus23/goslo.policy), a Go implementation of OpenStack's oslo.policy library.
-
 > **Integration**: This server is designed to work seamlessly with [oslo.policy.remote](https://github.com/mehmettopcu/oslo.policy.remote), which provides a Python client for remote policy enforcement. Together, they enable distributed policy enforcement across your OpenStack services.
 
 ## Features
@@ -79,6 +78,49 @@ curl -s -X POST http://policy-server:8082/enforce \
       "project_id": "7890"
     }
   }'
+```
+
+## Benchmark Test
+
+```bash
+# Make the script executable
+chmod +x benchmark.sh
+
+# Run with default settings
+./benchmark.sh
+
+# Run with custom parameters
+./benchmark.sh -d 30 -p 20 -h http://policy-server:8082 -i 0.1
+
+
+Starting benchmark...
+Duration: 60 seconds
+Parallel requests: 20
+Host: http://localhost:8082
+Interval: 0.1 seconds
+
+Calculating statistics...
+Statistics:
+===========
+Sample count: 7760
+  - Total number of requests completed during the test
+Average latency: 0.00394145 seconds
+  - Mean response time across all requests
+Min latency: 0.000374 seconds
+  - Fastest response time observed
+Max latency: 0.023808 seconds
+  - Slowest response time observed
+P50 latency: 0.003324 seconds
+  - Median response time (50% of requests were faster)
+P90 latency: 0.007749 seconds
+  - 90th percentile (90% of requests were faster)
+P95 latency: 0.009224 seconds
+  - 95th percentile (95% of requests were faster)
+P99 latency: 0.013159 seconds
+  - 99th percentile (99% of requests were faster)
+
+Requests per second: 129.333
+  - Throughput: Number of requests processed per second
 ```
 
 ## API Reference
