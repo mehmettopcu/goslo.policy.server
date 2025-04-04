@@ -8,6 +8,8 @@ This project implements a centralized policy server for OpenStack Oslo policy ru
 
 > **Note**: This project is built on top of [goslo.policy](https://github.com/databus23/goslo.policy), a Go implementation of OpenStack's oslo.policy library.
 
+> **Integration**: This server is designed to work seamlessly with [oslo.policy.remote](https://github.com/mehmettopcu/oslo.policy.remote), which provides a Python client for remote policy enforcement. Together, they enable distributed policy enforcement across your OpenStack services.
+
 ## Features
 
 - HTTP-based policy enforcement API
@@ -35,7 +37,7 @@ go get github.com/mehmettopcu/goslo.policy.server
 1.Create a policy directory and add your policy files:
 
 ```bash
-  mkdir -p policies
+  mkdir -p policy-files
 ```
 
 2.Add policy files for each service (e.g., `policy-files/nova.yaml`):
@@ -63,24 +65,17 @@ The server will start and listen for policy enforcement requests. It supports gr
 4.Make policy enforcement requests:
 
 ```bash
-curl -X POST http://localhost:8082/enforce \
+curl -s -X POST http://policy-server:8082/enforce \
   -H "Content-Type: application/json" \
   -d '{
     "service": "nova",
-    "action": "compute:start_instance",
-    "token": {
-      "user": {
-        "id": "123456",
-        "name": "alice",
-        "roles": ["admin"],
-        "domain": "default"
-      },
-      "project": {
-        "id": "7890",
-        "name": "demo"
-      }
+    "rule": "os_compute_api:servers:detail",
+    "credentials": {
+        "user_id": "123456",
+        "project_id": "7890",
+        "roles": ["admin"]
     },
-    "request": {
+    "target": {
       "project_id": "7890"
     }
   }'

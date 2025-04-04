@@ -482,6 +482,7 @@ func (pm *PolicyManager) HandleEnforce(w http.ResponseWriter, r *http.Request) {
 			pm.logger.Error("failed to encode response", "error", err)
 			return
 		}
+		pm.logger.Info("service not found", "service", req.Service)
 		return
 	}
 

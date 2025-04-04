@@ -20,7 +20,7 @@ spec:
         image: ghcr.io/mehmettopcu/goslo.policy.server:main
         imagePullPolicy: Always
         command: ["/usr/local/bin/policy-server"]
-        args: ["-policy-dir", "/policy-files", "-addr", ":8082", "-log-dir", "/var/log/policy-server", "-watch-config", "true"]
+        args: ["-policy-dir", "/policy-files", "-addr", ":8082", "-log-stdout", "true", "-watch-config", "false"]
         ports:
         - containerPort: 8082
           name: http

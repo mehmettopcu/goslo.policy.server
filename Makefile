@@ -10,3 +10,6 @@ policy/parser.go: policy/parser.y
 lint:
 	golangci-lint run ./...
 
+bench:
+	go test -bench=. -cpu=1 ./server
+	go test -bench=. -benchmem ./server

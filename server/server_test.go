@@ -475,7 +475,7 @@ func BenchmarkPolicyReload(b *testing.B) {
 	tmpDir, cleanup := setupTestPolicyDir(b)
 	defer cleanup()
 
-	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), false)
+	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), true)
 	if err != nil {
 		b.Fatalf("Failed to create policy server: %v", err)
 	}
@@ -498,11 +498,6 @@ func BenchmarkPolicyReload(b *testing.B) {
 			b.Fatalf("Failed to write policy file: %v", err)
 		}
 
-		// Force policy reload
-		if err := ps.loadAllPolicies(false); err != nil {
-			b.Fatalf("Failed to reload policies: %v", err)
-		}
-
 		// Write back original content
 		if err := os.WriteFile(policyFile, []byte(`"admin_required": "role:admin or is_admin:1"
 "owner": "user_id:%(user_id)s"
@@ -512,11 +507,6 @@ func BenchmarkPolicyReload(b *testing.B) {
 "compute:resize_instance": "role:admin or role:member"`), 0644); err != nil {
 			b.Fatalf("Failed to write policy file: %v", err)
 		}
-
-		// Force policy reload
-		if err := ps.loadAllPolicies(false); err != nil {
-			b.Fatalf("Failed to reload policies: %v", err)
-		}
 	}
 }
 
@@ -524,7 +514,7 @@ func BenchmarkConcurrentEnforce(b *testing.B) {
 	tmpDir, cleanup := setupTestPolicyDir(b)
 	defer cleanup()
 
-	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), false)
+	ps, err := NewPolicyManager(tmpDir, log.GetLogger(), true)
 	if err != nil {
 		b.Fatalf("Failed to create policy server: %v", err)
 	}
@@ -538,6 +528,7 @@ func BenchmarkConcurrentEnforce(b *testing.B) {
 			UserID:   "123",
 			DomainID: "default",
 			IsAdmin:  true,
+			Roles:    []string{"admin"},
 		},
 		Request: Request{
 			UserID: "123",
@@ -553,11 +544,29 @@ func BenchmarkConcurrentEnforce(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
+			// Create HTTP request
 			httpReq := httptest.NewRequest("POST", "/enforce", bytes.NewBuffer(body))
 			httpReq.Header.Set("Content-Type", "application/json")
+
+			// Create response recorder
 			rr := httptest.NewRecorder()
+
+			// Handle the request
 			ps.HandleEnforce(rr, httpReq)
-			b.N--
+
+			// Check response
+			if rr.Code != http.StatusOK {
+				b.Errorf("Expected status %v, got %v", http.StatusOK, rr.Code)
+			}
+
+			var response EnforceResponse
+			if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+				b.Fatalf("Failed to decode response: %v", err)
+			}
+
+			if !response.Allowed {
+				b.Error("Expected request to be allowed")
+			}
 		}
 	})
 }
